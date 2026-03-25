@@ -44,7 +44,7 @@ function normalizeTags(raw: string): string[] {
 
 export default function Home() {
   const [notes, setNotes] = useState<Note[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [loadingList, setLoadingList] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -62,25 +62,30 @@ export default function Home() {
     [notes, selectedId]
   );
 
-  const lastLoadedNoteId = useRef<string | null>(null);
+  const lastLoadedNoteId = useRef<number | null>(null);
   const lastSavedSnapshot = useRef<string>("");
 
   async function refreshList(q?: string) {
     setLoadingList(true);
     setLoadError(null);
     try {
-      const list = await NotesApi.listNotes(q);
-      // Sort newest updated first if present
-      const sorted = [...list].sort((a, b) => {
+      const trimmed = q?.trim() ?? "";
+      const resp = trimmed
+        ? await NotesApi.searchNotes({ q: trimmed, mode: "all" })
+        : await NotesApi.listNotes({ sort: "updated_desc" });
+
+      // Backend already sorts by updated_desc by default, but keep a safe local sort.
+      const sorted = [...resp.items].sort((a, b) => {
         const au = a.updated_at ?? a.created_at ?? "";
         const bu = b.updated_at ?? b.created_at ?? "";
         return bu.localeCompare(au);
       });
+
       setNotes(sorted);
 
       // Keep selection if possible, otherwise select first
       setSelectedId((prev) => {
-        if (prev && sorted.some((n) => n.id === prev)) return prev;
+        if (prev !== null && sorted.some((n) => n.id === prev)) return prev;
         return sorted.length ? sorted[0].id : null;
       });
     } catch (e) {
@@ -162,11 +167,13 @@ export default function Home() {
     try {
       setLoadError(null);
       await NotesApi.deleteNote(selectedNote.id);
-      setNotes((prev) => prev.filter((n) => n.id !== selectedNote.id));
-      setSelectedId((prev) => {
-        if (prev !== selectedNote.id) return prev;
-        const remaining = notes.filter((n) => n.id !== selectedNote.id);
-        return remaining.length ? remaining[0].id : null;
+      setNotes((prev) => {
+        const remaining = prev.filter((n) => n.id !== selectedNote.id);
+        setSelectedId((currentSelected) => {
+          if (currentSelected !== selectedNote.id) return currentSelected;
+          return remaining.length ? remaining[0].id : null;
+        });
+        return remaining;
       });
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to delete note");
